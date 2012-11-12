@@ -72,6 +72,7 @@
 
 void* kma_malloc(kma_size_t size)
 {
+
   kpage_t* page;
   
   // get one page

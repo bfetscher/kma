@@ -42,6 +42,7 @@
 /************System include***********************************************/
 #include <assert.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 /************Private include**********************************************/
 #include "kpage.h"
@@ -54,24 +55,123 @@
  *  structures and arrays, line everything up in neat columns.
  */
 
+
+typedef struct
+{
+  void* minaddr;
+  void* maxaddr;
+  int allocs;
+  int bufsizes[10];
+  void* lists[10];
+} freelist_t;
+
+typedef struct
+{
+  kpage_t* me;
+  void* nextpage;
+} page_t;
+
 /************Global Variables*********************************************/
+
+static kpage_t* pages = 0;
 
 /************Function Prototypes******************************************/
 
+// get the first page and add freelist struct
+void initializepages();
+
+// add a buffer to the free list
+void addtofreelist(void*, int); 
+
+// try to alloc by using the free list
+void* allocintofreelist(kma_size_t);
+
 /************External Declaration*****************************************/
+
 
 /**************Implementation***********************************************/
 
 void*
 kma_malloc(kma_size_t size)
 {
-  return NULL;
+
+  if (!pages) {
+    initializepages();
+  }
+
+  size = size + sizeof(void*);
+  void* addr = allocintofreelist(size);
+
+  return addr;
 }
 
 void
 kma_free(void* ptr, kma_size_t size)
 {
   ;
+}
+
+void* allocintofreelist(kma_size_t size)
+{
+  freelist_t* list = (freelist_t*)(pages->ptr + sizeof(page_t));
+  int i;
+  for (i = 0; i < 10; i ++) {
+    if (list->bufsizes[i] >= size) {
+      if (list->lists[i] != NULL) {
+	void* addr = list->lists[i];
+	void* nextaddr = *((void **) addr);
+	list->lists[i] = nextaddr;
+	*((void **) addr) = list->lists[i];
+	return addr + sizeof(void*);
+      } else {
+	return NULL;
+      }
+    } 
+  }
+  return NULL;
+}
+
+void initializepages()
+{
+  kpage_t* new_kpage = get_page();
+  page_t* new_page = (page_t *)(new_kpage->ptr);
+  new_page->me = new_kpage;
+  page_t* next = NULL; // has to be NULL if we're here
+  new_page->nextpage = next;
+  pages = new_kpage;
+  freelist_t* list = (freelist_t*)((void *)new_page + sizeof(page_t));
+  list->minaddr = 0;
+  list->maxaddr = 0;
+  list->allocs = 0;
+  int i;
+  int size = 16;
+  for(i = 0; i < 10; i ++) {
+    list->bufsizes[i] = size;
+    list->lists[i] = NULL;
+    size *= 2;
+  }
+  void* nextaddr = (void *)new_page + sizeof(page_t) + sizeof(freelist_t);
+  size = 16;
+  for(i = 0; i < 10; i++) {
+    if ((((unsigned long int)nextaddr + size) - (unsigned long int)new_page) < new_kpage->size) {
+      addtofreelist(nextaddr, size);
+      nextaddr += size;
+      size *= 2;
+    }
+  }
+}
+
+void addtofreelist(void* addr, int size) 
+{
+  freelist_t* list = (freelist_t*)(pages->ptr + sizeof(page_t));
+  int i;
+  for (i = 0; i < 10; i ++) {
+    if (size == list->bufsizes[i]) {
+      *((void **)addr) = list->lists[i];
+      list->lists[i] = addr;
+      break;
+    }
+  }
 }
 
 #endif // KMA_P2FL

@@ -24,7 +24,8 @@ RM = rm
 MKDIR = mkdir
 TAR = tar cvf
 COMPRESS = gzip
-CFLAGS = -g -Wall -O2 -D_GNU_SOURCE -lm
+#CFLAGS = -g -Wall -O2 -D_GNU_SOURCE -lm
+CFLAGS = -g -Wall -ggdb -D_GNU_SOURCE -lm
 
 DELIVERY = Makefile *.h *.c DOC
 PROGS = kma_dummy kma_rm kma_p2fl kma_mck2 kma_bud kma_lzbud
