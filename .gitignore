@@ -2,3 +2,4 @@ testsuite
 *.gch
 *~
 .nfs*
+*#

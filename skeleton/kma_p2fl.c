@@ -58,8 +58,6 @@
 
 typedef struct
 {
-  void* minaddr;
-  void* maxaddr;
   int allocs;
   int bufsizes[10];
   void* lists[10];
@@ -69,6 +67,7 @@ typedef struct
 {
   kpage_t* me;
   void* nextpage;
+  int pageallocs;
 } page_t;
 
 typedef enum
@@ -100,6 +99,9 @@ void allocate_new_page(page_size_t);
 // free all the kpages we've gotten
 void freekpages();
 
+// free a single kpage and remove it from the list
+void freeonepage(page_t* page);
+
 /************External Declaration*****************************************/
 
 
@@ -109,7 +111,7 @@ void*
 kma_malloc(kma_size_t size)
 {
 
-  printf("allocating: %d\n", (unsigned int)size);
+  //printf("allocating: %d\n", (unsigned int)size);
 
   if (!pages) {
     initializepages();
@@ -127,7 +129,7 @@ kma_malloc(kma_size_t size)
     allocate_new_page(NORMAL);
   } else if (size < 4096) {
     allocate_new_page(BIG);
-  } else if (size < 8176) {
+  } else if (size < (8192 - sizeof(page_t))) {
     allocate_new_page(HUGE);
   }
 
@@ -145,11 +147,16 @@ kma_free(void* ptr, kma_size_t size)
   freelist_t* list = (freelist_t *)(pages->ptr + sizeof(page_t));
   ptr = (ptr - sizeof(int));
   int mysize = *((int *) ptr);
-  printf("size %d mysize %d\n", size, mysize);
+  //printf("size %d mysize %d\n", size, mysize);
   addtofreelist(ptr, mysize);
-  list->allocs--;
-  if (list->allocs <= 0)
+  list->allocs--; 
+  page_t* page = (page_t*)(BASEADDR(ptr));
+  page->pageallocs = page->pageallocs - 1;
+  if (list->allocs <= 0) {
     freekpages();
+  } else if (page->pageallocs == 0) {
+    freeonepage(page);
+  }
 }
 
 void
@@ -162,6 +169,7 @@ freekpages()
     free_page(p->me);
     p = next_p;
   }
+  pages = NULL;
 }
 
 void* 
@@ -177,6 +185,8 @@ allocintofreelist(kma_size_t size)
 	list->lists[i] = nextaddr;
  	*((int *) addr) = size;
 	list->allocs++;
+	page_t* page = (page_t*)(BASEADDR(addr));
+	page->pageallocs = page->pageallocs + 1;
 	return addr + sizeof(int);
       } else {
 	return NULL;
@@ -192,10 +202,9 @@ void initializepages()
   page_t* new_page = (page_t *)(new_kpage->ptr);
   new_page->me = new_kpage;
   new_page->nextpage = NULL;
+  new_page->pageallocs = 100; // the first page is special...don't want to lose the lists!
   pages = new_kpage;
   freelist_t* list = (freelist_t*)((void *)new_page + sizeof(page_t));
-  list->minaddr = 0;
-  list->maxaddr = 0;
   list->allocs = 0;
   int i;
   int size = 16;
@@ -204,7 +213,7 @@ void initializepages()
     list->lists[i] = NULL;
     size *= 2;
   }
-  list->bufsizes[9] = 8176;
+  list->bufsizes[9] = (8192 - sizeof(page_t));
   void* nextaddr = (void *)new_page + sizeof(page_t) + sizeof(freelist_t);
   size = 16;
   for(i = 0; i < 10; i++) {
@@ -230,6 +239,7 @@ void allocate_new_page(page_size_t s)
   page_t* new_page = (page_t *)(new_kpage->ptr);
   new_page->me = new_kpage;
   new_page->nextpage = NULL;
+  new_page->pageallocs = 0;
   page_t* old_page = (page_t *)(pages->ptr);
   while(old_page->nextpage != NULL)
     old_page = old_page->nextpage;
@@ -247,7 +257,7 @@ void allocate_new_page(page_size_t s)
   } else if (s == BIG) {
     size = 4096;
   } else if (s == HUGE) {
-    size = 8176;
+    size = (8192 - sizeof(page_t));
   }
   while (size >= 16) {
     while ((current + size) <= max) {
@@ -256,6 +266,41 @@ void allocate_new_page(page_size_t s)
     }
     size /= 2;
   }
+}
+
+void 
+freeonepage(page_t* page)
+{
+  
+  //printf("freeing page at %p\n", (void*)page);
+
+  if (((page_t*)pages->ptr) == page)
+    return;
+  
+  kpage_t* kpage = page->me;
+  void* addr = (void*)page;
+  freelist_t* list = (freelist_t*)(pages->ptr + sizeof(page_t));
+  int i;
+  for (i = 0; i < 10; i++) {
+    void** freebuf = ((void**)list->lists) + i;
+    while (*freebuf != NULL) {
+      void* nextbuf = *freebuf;
+      if (BASEADDR(*freebuf) == addr) {
+	*freebuf = *((void**)nextbuf);
+      } else {
+	freebuf = (void**)(*freebuf);
+      }
+    }
+  }
+  page_t* pgs = (page_t*)pages->ptr;
+  while (pgs != NULL) {
+    if (pgs->nextpage == page) {
+      pgs->nextpage = page->nextpage;
+      break;
+    }
+    pgs = pgs->nextpage;
+  }
+  free_page(kpage);
 }
 
 void addtofreelist(void* addr, int size) 
