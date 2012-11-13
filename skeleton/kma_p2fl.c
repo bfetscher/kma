@@ -86,6 +86,9 @@ void addtofreelist(void*, int);
 // try to alloc by using the free list
 void* allocintofreelist(kma_size_t);
 
+// get another page and add buffers to the free lists
+void allocate_new_page();
+
 /************External Declaration*****************************************/
 
 
@@ -95,14 +98,26 @@ void*
 kma_malloc(kma_size_t size)
 {
 
+  printf("allocating: %d\n", (unsigned int)size);
+
   if (!pages) {
     initializepages();
   }
 
   size = size + sizeof(void*);
   void* addr = allocintofreelist(size);
+  
+  if (addr != NULL) {
+    return addr;
+  }
+  
+  allocate_new_page();
+  addr = allocintofreelist(size);
+  if (addr != NULL) {
+    return addr;
+  }
 
-  return addr;
+  return NULL;
 }
 
 void
@@ -136,8 +151,7 @@ void initializepages()
   kpage_t* new_kpage = get_page();
   page_t* new_page = (page_t *)(new_kpage->ptr);
   new_page->me = new_kpage;
-  page_t* next = NULL; // has to be NULL if we're here
-  new_page->nextpage = next;
+  new_page->nextpage = NULL;
   pages = new_kpage;
   freelist_t* list = (freelist_t*)((void *)new_page + sizeof(page_t));
   list->minaddr = 0;
@@ -158,6 +172,26 @@ void initializepages()
       nextaddr += size;
       size *= 2;
     }
+  }
+}
+
+void allocate_new_page()
+{
+  kpage_t* new_kpage = get_page();
+  page_t* new_page = (page_t *)(new_kpage->ptr);
+  new_page->me = new_kpage;
+  new_page->nextpage = NULL;
+  page_t* old_page = (page_t *)(pages->ptr);
+  while(old_page->nextpage != NULL)
+    old_page = old_page->nextpage;
+  old_page->nextpage = new_page;
+  void* current = new_kpage->ptr + sizeof(page_t);
+  void* max = new_kpage->ptr + new_kpage->size;
+  int size = 16;
+  while((current + size) < max) {
+    addtofreelist(current, size);
+    current = current + size;
+    size *= 2;
   }
 }
 
