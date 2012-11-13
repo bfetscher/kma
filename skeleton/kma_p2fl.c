@@ -89,6 +89,9 @@ void* allocintofreelist(kma_size_t);
 // get another page and add buffers to the free lists
 void allocate_new_page();
 
+// free all the kpages we've gotten
+void freekpages();
+
 /************External Declaration*****************************************/
 
 
@@ -104,7 +107,7 @@ kma_malloc(kma_size_t size)
     initializepages();
   }
 
-  size = size + sizeof(void*);
+  size = size + 4;
   void* addr = allocintofreelist(size);
   
   if (addr != NULL) {
@@ -123,10 +126,30 @@ kma_malloc(kma_size_t size)
 void
 kma_free(void* ptr, kma_size_t size)
 {
-  ;
+  freelist_t* list = (freelist_t *)(pages->ptr + sizeof(page_t));
+  ptr = (ptr - sizeof(int));
+  int mysize = *((int *) ptr);
+  printf("size %d mysize %d\n", size, mysize);
+  addtofreelist(ptr, mysize);
+  list->allocs--;
+  if (list->allocs <= 0)
+    freekpages();
 }
 
-void* allocintofreelist(kma_size_t size)
+void
+freekpages()
+{
+  page_t* p = pages->ptr;
+  page_t* next_p;
+  while (p != NULL) {
+    next_p = p->nextpage;
+    free_page(p->me);
+    p = next_p;
+  }
+}
+
+void* 
+allocintofreelist(kma_size_t size)
 {
   freelist_t* list = (freelist_t*)(pages->ptr + sizeof(page_t));
   int i;
@@ -136,8 +159,9 @@ void* allocintofreelist(kma_size_t size)
 	void* addr = list->lists[i];
 	void* nextaddr = *((void **) addr);
 	list->lists[i] = nextaddr;
-	*((void **) addr) = list->lists[i];
-	return addr + sizeof(void*);
+	*((int *) addr) = size;
+	list->allocs++;
+	return addr + sizeof(int);
       } else {
 	return NULL;
       }
