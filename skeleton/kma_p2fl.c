@@ -202,7 +202,6 @@ void initializepages()
   page_t* new_page = (page_t *)(new_kpage->ptr);
   new_page->me = new_kpage;
   new_page->nextpage = NULL;
-  new_page->pageallocs = 100; // the first page is special...don't want to lose the lists!
   pages = new_kpage;
   freelist_t* list = (freelist_t*)((void *)new_page + sizeof(page_t));
   list->allocs = 0;
@@ -274,6 +273,7 @@ freeonepage(page_t* page)
   
   //printf("freeing page at %p\n", (void*)page);
 
+  // don't free the first page!
   if (((page_t*)pages->ptr) == page)
     return;
   
