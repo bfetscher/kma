@@ -125,11 +125,11 @@ kma_malloc(kma_size_t size)
     return addr;
   }
   
-  if (size < 2048) {
+  if (size <= 2048) {
     allocate_new_page(NORMAL);
-  } else if (size < 4096) {
+  } else if (size <= 4096) {
     allocate_new_page(BIG);
-  } else if (size < (8192 - sizeof(page_t))) {
+  } else if (size <= (8192 - sizeof(page_t))) {
     allocate_new_page(HUGE);
   }
 
