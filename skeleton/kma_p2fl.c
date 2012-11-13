@@ -71,6 +71,14 @@ typedef struct
   void* nextpage;
 } page_t;
 
+typedef enum
+{
+  NORMAL,
+  BIG,
+  HUGE
+} page_size_t;
+
+
 /************Global Variables*********************************************/
 
 static kpage_t* pages = 0;
@@ -87,7 +95,7 @@ void addtofreelist(void*, int);
 void* allocintofreelist(kma_size_t);
 
 // get another page and add buffers to the free lists
-void allocate_new_page();
+void allocate_new_page(page_size_t);
 
 // free all the kpages we've gotten
 void freekpages();
@@ -108,13 +116,21 @@ kma_malloc(kma_size_t size)
   }
 
   size = size + 4;
-  void* addr = allocintofreelist(size);
   
+  void* addr = allocintofreelist(size);
+ 
   if (addr != NULL) {
     return addr;
   }
   
-  allocate_new_page();
+  if (size < 2048) {
+    allocate_new_page(NORMAL);
+  } else if (size < 4096) {
+    allocate_new_page(BIG);
+  } else if (size < 8176) {
+    allocate_new_page(HUGE);
+  }
+
   addr = allocintofreelist(size);
   if (addr != NULL) {
     return addr;
@@ -159,7 +175,7 @@ allocintofreelist(kma_size_t size)
 	void* addr = list->lists[i];
 	void* nextaddr = *((void **) addr);
 	list->lists[i] = nextaddr;
-	*((int *) addr) = size;
+ 	*((int *) addr) = size;
 	list->allocs++;
 	return addr + sizeof(int);
       } else {
@@ -188,6 +204,7 @@ void initializepages()
     list->lists[i] = NULL;
     size *= 2;
   }
+  list->bufsizes[9] = 8176;
   void* nextaddr = (void *)new_page + sizeof(page_t) + sizeof(freelist_t);
   size = 16;
   for(i = 0; i < 10; i++) {
@@ -197,9 +214,17 @@ void initializepages()
       size *= 2;
     }
   }
+  size /= 2;
+  while (size >= 16) {
+    while ((((unsigned long int)nextaddr + size) - (unsigned long int)new_page) < new_kpage->size) {
+      addtofreelist(nextaddr, size);
+      nextaddr += size;
+    }
+    size /= 2;
+  }
 }
 
-void allocate_new_page()
+void allocate_new_page(page_size_t s)
 {
   kpage_t* new_kpage = get_page();
   page_t* new_page = (page_t *)(new_kpage->ptr);
@@ -212,10 +237,24 @@ void allocate_new_page()
   void* current = new_kpage->ptr + sizeof(page_t);
   void* max = new_kpage->ptr + new_kpage->size;
   int size = 16;
-  while((current + size) < max) {
-    addtofreelist(current, size);
-    current = current + size;
-    size *= 2;
+  if (s == NORMAL) {
+    while((current + size) < max) {
+      addtofreelist(current, size);
+      current = current + size;
+      size *= 2;
+    }
+    size /= 2;
+  } else if (s == BIG) {
+    size = 4096;
+  } else if (s == HUGE) {
+    size = 8176;
+  }
+  while (size >= 16) {
+    while ((current + size) <= max) {
+      addtofreelist(current, size);
+      current += size;
+    }
+    size /= 2;
   }
 }
 
