@@ -55,7 +55,8 @@
  *  structures and arrays, line everything up in neat columns.
  */
 
-
+// holds total allocations and pointers into the free list
+// goes in first page allocated
 typedef struct
 {
   int allocs;
@@ -63,6 +64,8 @@ typedef struct
   void* lists[10];
 } freelist_t;
 
+// page header for every page
+// keeps a linked list of pages, and allocations for this page
 typedef struct
 {
   kpage_t* me;
@@ -125,6 +128,8 @@ kma_malloc(kma_size_t size)
     return addr;
   }
   
+  // if there isn't space in the free list, we need a new page
+  // allocate buffers to the free list depending on the buffer needed
   if (size <= 2048) {
     allocate_new_page(NORMAL);
   } else if (size <= 4096) {
@@ -147,11 +152,13 @@ kma_free(void* ptr, kma_size_t size)
   freelist_t* list = (freelist_t *)(pages->ptr + sizeof(page_t));
   ptr = (ptr - sizeof(int));
   int mysize = *((int *) ptr);
-  //printf("size %d mysize %d\n", size, mysize);
+  // just add this ptr back to the free list
+  // and adjust alloc counts
   addtofreelist(ptr, mysize);
   list->allocs--; 
   page_t* page = (page_t*)(BASEADDR(ptr));
   page->pageallocs = page->pageallocs - 1;
+  // free all pages or a single page based on the alloc counts
   if (list->allocs <= 0) {
     freekpages();
   } else if (page->pageallocs == 0) {
@@ -162,6 +169,7 @@ kma_free(void* ptr, kma_size_t size)
 void
 freekpages()
 {
+  // free every page left in the list
   page_t* p = pages->ptr;
   page_t* next_p;
   while (p != NULL) {
@@ -175,6 +183,8 @@ freekpages()
 void* 
 allocintofreelist(kma_size_t size)
 {
+  // given a size, find an appropriate buffer in the free list
+  // and return it (or NULL if there isn't one)
   freelist_t* list = (freelist_t*)(pages->ptr + sizeof(page_t));
   int i;
   for (i = 0; i < 10; i ++) {
@@ -184,6 +194,7 @@ allocintofreelist(kma_size_t size)
 	void* nextaddr = *((void **) addr);
 	list->lists[i] = nextaddr;
  	*((int *) addr) = size;
+	// adjust the allocation counts up by one...
 	list->allocs++;
 	page_t* page = (page_t*)(BASEADDR(addr));
 	page->pageallocs = page->pageallocs + 1;
@@ -198,11 +209,14 @@ allocintofreelist(kma_size_t size)
 
 void initializepages()
 {
+  // this allocates the first page
+  // and adds the struct that tracks the free lists
   kpage_t* new_kpage = get_page();
   page_t* new_page = (page_t *)(new_kpage->ptr);
   new_page->me = new_kpage;
   new_page->nextpage = NULL;
   pages = new_kpage;
+  // initialize the freelist struct...
   freelist_t* list = (freelist_t*)((void *)new_page + sizeof(page_t));
   list->allocs = 0;
   int i;
@@ -213,6 +227,7 @@ void initializepages()
     size *= 2;
   }
   list->bufsizes[9] = (8192 - sizeof(page_t));
+  // partition this page into buffers and add to the free list
   void* nextaddr = (void *)new_page + sizeof(page_t) + sizeof(freelist_t);
   size = 16;
   for(i = 0; i < 10; i++) {
@@ -234,6 +249,7 @@ void initializepages()
 
 void allocate_new_page(page_size_t s)
 {
+  // allocate an "as needed" page
   kpage_t* new_kpage = get_page();
   page_t* new_page = (page_t *)(new_kpage->ptr);
   new_page->me = new_kpage;
@@ -243,6 +259,8 @@ void allocate_new_page(page_size_t s)
   while(old_page->nextpage != NULL)
     old_page = old_page->nextpage;
   old_page->nextpage = new_page;
+  // partition into buffers (depending on the needed size)
+  // and add to the free list
   void* current = new_kpage->ptr + sizeof(page_t);
   void* max = new_kpage->ptr + new_kpage->size;
   int size = 16;
@@ -270,15 +288,17 @@ void allocate_new_page(page_size_t s)
 void 
 freeonepage(page_t* page)
 {
-  
-  //printf("freeing page at %p\n", (void*)page);
+  // frees a page once its allocation count
+  // has reached 0
 
-  // don't free the first page!
+  // but don't free the first page!
   if (((page_t*)pages->ptr) == page)
     return;
   
   kpage_t* kpage = page->me;
   void* addr = (void*)page;
+  // go through the free lists and remove any buffers
+  // pointing into this page
   freelist_t* list = (freelist_t*)(pages->ptr + sizeof(page_t));
   int i;
   for (i = 0; i < 10; i++) {
@@ -292,6 +312,7 @@ freeonepage(page_t* page)
       }
     }
   }
+  // remove this page from the pages list
   page_t* pgs = (page_t*)pages->ptr;
   while (pgs != NULL) {
     if (pgs->nextpage == page) {
@@ -300,11 +321,14 @@ freeonepage(page_t* page)
     }
     pgs = pgs->nextpage;
   }
+  // and finally free the page
   free_page(kpage);
 }
 
 void addtofreelist(void* addr, int size) 
 {
+  // find the appropriate free list, and
+  // and addr to the beginning of the list
   freelist_t* list = (freelist_t*)(pages->ptr + sizeof(page_t));
   int i;
   for (i = 0; i < 10; i ++) {
