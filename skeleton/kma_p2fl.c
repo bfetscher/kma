@@ -200,7 +200,7 @@ allocintofreelist(kma_size_t size)
 	page->pageallocs = page->pageallocs + 1;
 	return addr + sizeof(int);
       } else {
-	return NULL;
+	continue;
       }
     } 
   }
