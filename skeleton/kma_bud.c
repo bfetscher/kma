@@ -114,7 +114,7 @@ void coalesce_blocks();
 void*
 kma_malloc(kma_size_t size)
 {
-  printf("handling malloc request for %d bytes\n",(unsigned int)size);
+  
   if (!pages) {
     initializepages();
   }
@@ -161,12 +161,16 @@ freekpages()
     free_page(p->me);
     p = next_p;
   }
+  pages = NULL;
 }
 
 void* 
 get_free_block(kma_size_t size) //size INCLUDES header ptr
 {
   freelist_t* list = (freelist_t*)(pages->ptr + sizeof(page_t));
+  if (size > list->bufsizes[9]) {
+    return NULL;
+  }
   int i=0;
   while (list->bufsizes[i] < size) {
     i++;
@@ -182,7 +186,6 @@ get_free_block(kma_size_t size) //size INCLUDES header ptr
     void* addr = list->lists[i];
     void* nextaddr = *((void**)addr);
     list->lists[i] = nextaddr;
-    printf("addr = %p\n",addr);
     
     nextaddr = list->lists[i-1];
     list->lists[i-1] = addr;
@@ -255,7 +258,6 @@ void addtofreelist(void* addr, int size) // size INCLUDES head ptr
   freelist_t* list = (freelist_t*)(pages->ptr + sizeof(page_t));
   int i;
   for (i = 0; i < 10; i ++) {
-    printf("i = %d, bufsize = %d\n",i,list->bufsizes[i]);
     if (size == list->bufsizes[i]) {
       *((void **)addr) = list->lists[i];
       list->lists[i] = addr;
