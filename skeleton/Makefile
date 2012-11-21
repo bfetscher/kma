@@ -11,11 +11,11 @@
 ###############################################################################
 
 # handin info
-TEAM = `baf111`
+TEAM = "baf111+mjg839"
 VERSION = `date +%Y%m%d%H%M%S`
 PROJ = kma
 
-COMPETITION = KMA_P2FL
+COMPETITION = KMA_DUMMY
 
 CC = gcc
 MV = mv
