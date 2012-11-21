@@ -254,7 +254,6 @@ void initializepages()
     new_page->bitmap[i] = 0;
   }
   list->bufsizes[9] = effectivePagesize;
-  list->fullpagebufs = NULL;
   void* nextaddr = (void*)new_page + sizeof(page_t) + sizeof(freelist_t);
   addtofreelist(nextaddr,list->bufsizes[9]);
 }
