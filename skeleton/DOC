@@ -2,3 +2,21 @@
 ========== Buddy System ==========
 The buddy system has quite good average resource utilization, because it tries to coalesce adjacent regions ("buddies") whenever possible to create larger free regions that can then be split and allocated again on request. On the given traces, it only requests about half as many pages as power of two free lists. One drawback of both systems in this regard is that they can only allocate memory in powers of two, which can result in bad resource utilization if the requests are slightly larger than a power-of-two (e.g. 2^n+1). 
 The performance of the buddy system is not too good because it needs to check the bitmap of free buffers after every kma_free request and decide whether to coalesce. This can result in very bad worst-case performance if free and alloc requests alternate, because the allocator will try to coalesce regions every time, only to immediately split them again to serve the alloc request. On the traces provided, kma_bud is faster than kma_p2fl when there are a lot of requests (traces 4&5,) because it needs less pages and the size of the free lists it needs to maintain are smaller. However, it takes longer when there are not a lot of requests (traces 1-3,) presumably due to the cost of checking for coalescable regions.
+
+====== Power of 2 Free List ======
+The free list implementation uses first fit when searching for a buffer to return for a given 
+allocation request.  It allocates pages in something approximating a linear distribution, but
+tries to use all the available space in every page it requests for buffers.
+
+When running on trace 5, the free list has an average allocation latency of 28 microseconds and a
+maximum latency of 4235 microseconds. It has an average free latency of 20 microseconds and a
+maximum latency of 321 microseconds. The ratio of wasted bytes to used bytes is 3.37.  The utilization
+could possibly be improved by using best fit instead of first fit, although that isn't completely 
+clear becuase it might cause more page requests; however, that would definitely increase the
+latencies even more.
+
+As mentioned above, the free list is better at serving a lot of allocation/free requests because
+it does a little less bookkeeping.  On the other hand, the buddy system has better utilization
+in the long run because of the extra work it does to coalesce empty buffers.
+
+
