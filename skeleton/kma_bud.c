@@ -53,8 +53,6 @@
  *  structures and arrays, line everything up in neat columns.
  */
 
-#define MIN_BLOCKSIZE 16
-
 typedef struct
 {
   void* minaddr;
@@ -68,7 +66,7 @@ typedef struct
 {
   kpage_t* me;
   void* nextpage;
-  //char bitmap[64];
+  char bitmap[128];
 } page_t;
 
 typedef enum
@@ -106,7 +104,12 @@ void freekpages();
 void update_bitmap(void*,kma_size_t,mem_status_t);
 
 // coalesce adjacent memory regions, if possible
-void coalesce_blocks();
+int coalesce_blocks(void*,int);
+
+// check if the nth bit of a bitfield (represented by a byte array) is 1 or 0
+bool test_nth_bit(int,char[]);
+
+//void* request_full_page(int);
 /************External Declaration*****************************************/
 
 /**************Implementation***********************************************/
@@ -114,23 +117,34 @@ void coalesce_blocks();
 void*
 kma_malloc(kma_size_t size)
 {
-  
   if (!pages) {
     initializepages();
   }
   size = size + sizeof(int);
+  void* addr;
   
-  void* addr = get_free_block(size);
+  if (size > PAGESIZE-sizeof(page_t)-sizeof(kpage_t)-sizeof(freelist_t)) {
+    kpage_t* page = get_page();
+    *((kpage_t**)page->ptr) = page;
+    if ((size + sizeof(kpage_t*)) > page->size)
+    { // requested size too large
+      free_page(page);
+      return NULL;
+    }
+    return page->ptr + sizeof(kpage_t*);
+  }
+  
+  addr = get_free_block(size);
   
   if (addr != NULL) {
-    update_bitmap(addr, size, MEM_USED);
+    update_bitmap(addr-sizeof(int), *((int*)(addr-sizeof(int))), MEM_USED);
     return addr;
   }
   allocate_new_page();
   
   addr = get_free_block(size);
   if (addr != NULL) {
-    update_bitmap(addr, size, MEM_USED);
+    update_bitmap(addr-sizeof(int), *((int*)(addr-sizeof(int))), MEM_USED);
     return addr;
   }
   return NULL;
@@ -140,10 +154,19 @@ void
 kma_free(void* ptr, kma_size_t size)
 {
   freelist_t* list = (freelist_t *)(pages->ptr + sizeof(page_t));
+  if (size > PAGESIZE-sizeof(page_t)-sizeof(kpage_t)-sizeof(freelist_t)-sizeof(int)) {
+    kpage_t* page = *((kpage_t**)(ptr - sizeof(kpage_t*)));
+    free_page(page);
+    return;
+  }
+  
   ptr = (ptr - sizeof(int));
   int mysize = *((int *) ptr); // size INCLUDES header ptr
+  
   update_bitmap(ptr, mysize, MEM_FREE);
-  coalesce_blocks();
+  mysize = coalesce_blocks(ptr,mysize);
+  
+  //printf("size == %d mysize == %d\n",size,mysize);
   addtofreelist(ptr, mysize);
   
   list->allocs--;
@@ -158,6 +181,7 @@ freekpages()
   page_t* next_p;
   while (p != NULL) {
     next_p = p->nextpage;
+    (p->me)->ptr = (void*)p;
     free_page(p->me);
     p = next_p;
   }
@@ -226,7 +250,11 @@ void initializepages()
     list->lists[i] = NULL;
     size *= 2;
   }
+  for (i = 0; i < 128; i++) {
+    new_page->bitmap[i] = 0;
+  }
   list->bufsizes[9] = effectivePagesize;
+  list->fullpagebufs = NULL;
   void* nextaddr = (void*)new_page + sizeof(page_t) + sizeof(freelist_t);
   addtofreelist(nextaddr,list->bufsizes[9]);
 }
@@ -241,6 +269,10 @@ void allocate_new_page()
   
   new_page->me = new_kpage;
   new_page->nextpage = NULL;
+  int i;
+  for (i = 0; i < 128; i++) {
+    new_page->bitmap[i] = 0;
+  }
   
   page_t* old_page = (page_t*)(pages->ptr);
   while (old_page->nextpage != NULL) {
@@ -268,12 +300,82 @@ void addtofreelist(void* addr, int size) // size INCLUDES head ptr
 
 // update the bitmap representing used/free memory regions
 void update_bitmap(void* ptr, kma_size_t size, mem_status_t status) {
-
+  
+  page_t* page = (page_t*)(pages->ptr);
+  while (ptr < (void*)page || ptr > (void*)page+PAGESIZE-sizeof(kpage_t)) {
+    page = (page_t*)(page->nextpage);
+  }
+  int offset = (ptr - (void*)page) - sizeof(page_t) - sizeof(freelist_t);
+  int i;
+  if (status == MEM_USED) {
+    for (i = offset/16; i < offset/16 + size/16; i++) {
+      page->bitmap[i/8] |= (1 << (7 - (i%8))); 
+    }
+  }
+  else {
+    for (i = offset/16; i < offset/16 + size/16; i++) {
+      page->bitmap[i/8] &= ~(1 << (7 - (i%8))); 
+    }
+  }
 }
 
-// coalesce memory regions around ptr, if possible
-// updates ptr and returns size of coalesced free region
-void coalesce_blocks() {
+// coalesce memory regions, if possible
+int coalesce_blocks(void* ptr, int size) {
+  //return size;
+  freelist_t* list = (freelist_t*)(pages->ptr + sizeof(page_t));
+  if (2*size > list->bufsizes[9]) {
+    return size;
+  }
+  // find page for ptr
+  page_t* page = (page_t*)(pages->ptr);
+  while (ptr < ((void*)page+sizeof(page_t)+sizeof(freelist_t)) || ptr > (void*)page+PAGESIZE-sizeof(kpage_t)) {
+    page = (page_t*)(page->nextpage);
+  }
+  int offset = (ptr - (void*)page) - sizeof(page_t) - sizeof(freelist_t);
+  
+  void* oldptr;
+  int startbit;
+  // calculate location of buddy ptr
+  if ((offset/size) % 2 == 0) {
+    startbit = offset/16 + size/16;
+    oldptr = ptr + size;
+  } else {
+    startbit = offset/16 - size/16;
+    oldptr = ptr - size;
+  }
+  int i;
+  // check if all bits in the range are empty
+  for (i=0; i < size/16; i++) {
+    if (test_nth_bit(startbit+i,page->bitmap) != 0) {
+      return size;
+    }
+  }
+  // if we reach this point, we can maybe coalesce
+  for (i=0; list->bufsizes[i] != size; i++) {}
+  void* curptr = list->lists[i];
+  
+    while (curptr != NULL && curptr > ((void*)page+sizeof(page_t)+sizeof(freelist_t)) && curptr < (void*)page+PAGESIZE-sizeof(kpage_t)) {
+      
+      if (*((void**)curptr) == oldptr) {
+        *((void**)curptr) = *((void**)oldptr);
+
+        if (oldptr < ptr) {
+          ptr = oldptr;
+        }
+        return 2*size;
+      }
+      curptr = *((void**)curptr);
+    }
+  return size;
+}
+
+bool test_nth_bit(int n,char bitmap[128]) {
+  int i=0;
+  while (n >= sizeof(char)) {
+    i++;
+    n -= sizeof(char);
+  }
+  return (bitmap[i] & (1 << (7 - n)));
 }
 
 #endif // KMA_BUD
